@@ -15,6 +15,9 @@
     "Protocol",
     "ICT002"
   ],
+  "publishConfig": {
+    "@koreets61:ict": "https://npm.pkg.github.com"
+  },
   "author": "koreets61@gmail.com",
   "license": "UNLICENSED",
   "bugs": {
