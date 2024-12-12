@@ -20,10 +20,11 @@ class ICT {
         143: 'Готов к работе'
     };
     
+	// Изменить в соответсвии со своей прошивкой 
     billtable = {
         64: {
-            cash: 10,
-            enabled: true
+            cash: 10,      // Номинал
+            enabled: true  // Запрет или прием банкноты
         },
         65: {
             cash: 50,
@@ -54,7 +55,8 @@ class ICT {
         
         this.com_port.on("open", () => {
             
-            this.com_port.write([0x30], e => {if(e) callback({status: "error", message: e.message});});
+			// Перезагружаем девайс
+            this.com_port.write([0x30], e => {if(e) this.callback({status: "error", message: e.message});});
 
             this.com_port.on('data', (chunk) => {
 
