@@ -1,11 +1,13 @@
 const { SerialPort } = require('serialport');
+const EventEmitter = require("events");
 
-
-class ICT {
+class ICT extends EventEmitter {
     
-    wait = false;
     cash = 0;
+    port = false;
+    timer = false;
     
+    // Одни из немногих кодов состояния купюрника
     code = {
         16: 'Купюра уложенна',
         17: 'Ошибка укладки купюры',
@@ -20,129 +22,148 @@ class ICT {
         143: 'Готов к работе'
     };
     
-	// Изменить в соответсвии со своей прошивкой 
-    billtable = {
-        64: {
-            cash: 10,      // Номинал
-            enabled: true  // Запрет или прием банкноты
-        },
-        65: {
-            cash: 50,
-            enabled: true
-        },
-        66: {
-            cash: 100,
-            enabled: true
-        },
-        69: {
-            cash: 5,
-            enabled: true
+    constructor(_com_port, reset = true){
+        super();
+        this.path = _com_port;
+        this.reset = reset;
+    };
+    
+    async connect(){
+        try {
+
+            if(this.path !== null){
+                await this.begin(this.path);
+            } else {
+                this.emit('error', error.message);
+                console.log(new Error("path not defined").message);
+            };
+            
+        } catch (error) {
+            this.emit('error', error.message);
+            throw error;
         }
     };
     
-    constructor(_com_port, callback){
-        
-        this.com_port = new SerialPort({
-            path: _com_port,
+    async begin(path){
+        let self = this;
+        this.port = new SerialPort({
+            path: path,
             baudRate: 9600,
-            parity: 'Even'
-        });  
-        
-        this.callback = callback;        
-    };
-    
-    init = () => {
-        
-        this.com_port.on("open", () => {
+            parity: "Even"
+        });
+
+        this.port.on('open', function () {
             
-			// Перезагружаем девайс
-            this.com_port.write([0x30], e => {if(e) this.callback({status: "error", message: e.message});});
-
-            this.com_port.on('data', (chunk) => {
-
-                let readBuffer = Buffer.alloc(0);
+            self.emit('open_port', this.port.openOptions);
+            
+            if(self.reset){
+                this.write([0x30], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
+            } else {
+                this.write([0x02], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
+            };
+            
+            this.on('data', (chunk) => {
+                
+                let readBuffer = new Buffer.alloc(0);
                 readBuffer = Buffer.concat([readBuffer, chunk], chunk.length + readBuffer.length);
                 
+                if(self.timer){
+                    clearTimeout(self.timer);
+                    self.timer = false;
+                };
+                
                 let s = Number(readBuffer[0]);
+                let data_s = {
+                    code: s,
+                    hex_string: "0x" + readBuffer[0].toString(16),
+                    description: 'Если Вам известен этот код состояния, пожалуйста сообщите мне об этом по электронной почте koreets61@gmail.com'
+                };
+                
+                if(self.code.hasOwnProperty(s)){
+                    data_s['description'] = self.code[s];
+                };
+                
+                self.emit('status', data_s);
+                
+                if(s === 128){
 
-                if(s === 128 || s === 143){
-                    
-                    this.com_port.write([0x02], e => {if(e) this.callback({status: "error", message: e.message});});
+                    self.emit('connect');
+                    this.write([0x02], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
+   
+                } else if(s === 143){
+
+                    self.emit('powerup', self.cash);
+                    this.write([0x02], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
                     
                 } else if(s === 16){
-                    
-                    this.callback({
-                        status: "ok",
-                        cash: this.cash
-                    });
-                    
-                    this.cash = 0;
+                                        
+                    self.emit('stacked', self.cash);
+                    self.cash = 0;
                 
                 } else if(s === 17){
                     
-                    this.callback({
-                        status: "error",
+                    self.emit('error', {
+                        code: this.code,
                         message: this.code[s]
                     });
-                    
-                    this.cash = 0;
+                    self.cash = 0;
                     
                 } else if(s === 41){
                     
-                    if(!this.wait){
-                        this.wait = true;
-                        setTimeout(() => {
-                            this.com_port.write([0x02], e => {if(e) this.callback({status: "error", message: e.message});});
-                            this.wait = false;
-                        }, 3000);
-                    };
+                   self.emit('return');
+                    self.cash = 0;
+                    
+                } else if(s === 47){
+                    
+                   self.emit('returned');
+                   self.cash = 0; 
                     
                 } else if(s === 94){
                     
-                    if(!this.wait){
-                        this.com_port.write([0x3e], e => {if(e) this.callback({status: "error", message: e.message});});
-                        setTimeout(() => {
-                            this.wait = false;
-                        }, 3000);
-                    };
+                   self.emit('hibernation');
+                   self.cash = 0;
                     
                 } else if(s === 129){
-                    
-                    this.newbill(readBuffer[1]);
+
+                    self.emit('escrow', readBuffer[1]);
                     
                 };
 
             });
-
         });
+
+        this.port.on('error', function (error) {
+            self.emit('error', {code: 1001, message: error.message});
+        });
+
+        this.port.on('close', function () {
+            self.emit('error', {code: 1001, message: "close port"});
+        });
+    }; 
+    
+    async accepted(){
+        this.port.write([0x02], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
     };
     
-    newbill = (credit) => {
- 
-        if(this.billtable.hasOwnProperty(credit)){
-
-            if(this.billtable[credit].enabled){
-                
-                this.com_port.write([0x02], e => {if(e) this.callback({status: "error", message: e.message});});
-                this.cash = Number(this.billtable[credit].cash);
-                
-            } else {
-                
-                this.com_port.write([0x0F], e => {if(e) this.callback({status: "error", message: e.message});});
-                callback({
-                    status: "error",
-                    message: "Номинал " + this.billtable[credit].cash + " запрещен"
-                });
-            };
-
-        } else {
-            this.com_port.write([0x0F], e => {if(e) this.callback({status: "error", message: e.message});});
-            this.callback({
-                status: "error",
-                message: "Неизвестный номинал " + credit
-            });
-        }
-    }
+    async returned(){
+        this.port.write([0x0F], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
+    };
+    
+    async status(){
+        this.port.write([0x0C], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
+        this.timer = setTimeout(async () => {
+            this.emit('error', {code: 1002, message: "Нет связи с устройством"});
+        }, 3000);
+    };
+    
+    async reload(){
+        this.port.write([0x30], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
+    };
+    
+    async powerUp(){
+        this.port.write([0x02], e => {if(e) this.emit('error', {code: 1000, message: e.message});});
+    };
+    
 };
 
 
