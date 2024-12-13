@@ -2,12 +2,18 @@
 ICT Protocol (ICT002)
 
 
+#### Установка
+
+```
+$ npm install @koreets61/ict
+```
+
 #### Пример
 
 ```
 const ICT002 = require('@koreets61/ICT');
 
-const ict = new ICT002('COM9', false);
+const ict = new ICT002('COM9', false); // если true то при каждой инициализации купюроприемник будет перезагружен
 
 async function init_ict(){
     
@@ -87,6 +93,7 @@ async function init_ict(){
                 console.log('Купюра разрешена, принимаю...');
                 await ict.accepted();
             } else {
+			console.log('Купюра запрещена, возвращаю...');
                 await ict.returned();
             };
             
